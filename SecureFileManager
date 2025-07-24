@@ -1,0 +1,507 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.example.securefilemanager">
+
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.SecureFileManager"
+        android:requestLegacyExternalStorage="true"
+        tools:targetApi="31">
+        
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".FileViewerActivity" />
+        <activity android:name=".SettingsActivity" />
+        <activity android:name=".LockActivity" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.example.securefilemanager.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <files-path name="encrypted_files" path="encrypted/" />
+    <cache-path name="encrypted_cache" path="encrypted/" />
+    <external-path name="external_files" path="Android/data/com.example.securefilemanager/files/" />
+</paths>
+package com.example.securefilemanager
+
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
+import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.LinearLayoutManager
+import com.example.securefilemanager.databinding.ActivityMainBinding
+import java.io.File
+
+class MainActivity : AppCompatActivity(), FileAdapter.FileClickListener {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var fileAdapter: FileAdapter
+    private val storagePermissions = arrayOf(
+        Manifest.permission.READ_EXTERNAL_STORAGE,
+        Manifest.permission.WRITE_EXTERNAL_STORAGE
+    )
+    private val STORAGE_PERMISSION_CODE = 101
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        checkPermissions()
+        setupRecyclerView()
+        setupClickListeners()
+    }
+
+    private fun setupRecyclerView() {
+        fileAdapter = FileAdapter(this)
+        binding.recyclerView.apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            adapter = fileAdapter
+        }
+        loadFiles()
+    }
+
+    private fun setupClickListeners() {
+        binding.fabAddFile.setOnClickListener {
+            showAddFileDialog()
+        }
+
+        binding.settingsButton.setOnClickListener {
+            startActivity(Intent(this, SettingsActivity::class.java))
+        }
+    }
+
+    private fun showAddFileDialog() {
+        val options = arrayOf("صور", "فيديوهات", "ملفات أخرى", "إنشاء ملف جديد")
+        
+        AlertDialog.Builder(this)
+            .setTitle("إضافة ملف")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> pickImage()
+                    1 -> pickVideo()
+                    2 -> pickFile()
+                    3 -> createNewFile()
+                }
+            }
+            .show()
+    }
+
+    private fun pickImage() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "image/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(intent, REQUEST_PICK_IMAGE)
+    }
+
+    private fun pickVideo() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "video/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(intent, REQUEST_PICK_VIDEO)
+    }
+
+    private fun pickFile() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            type = "*/*"
+            addCategory(Intent.CATEGORY_OPENABLE)
+        }
+        startActivityForResult(intent, REQUEST_PICK_FILE)
+    }
+
+    private fun createNewFile() {
+        // تنفيذ إنشاء ملف جديد
+    }
+
+    private fun loadFiles() {
+        val filesDir = if (Environment.getExternalStorageState() == Environment.MEDIA_MOUNTED) {
+            File(Environment.getExternalStorageDirectory(), "SecureFiles")
+        } else {
+            File(filesDir, "SecureFiles")
+        }
+
+        if (!filesDir.exists()) {
+            filesDir.mkdirs()
+        }
+
+        val files = filesDir.listFiles()?.toList() ?: emptyList()
+        fileAdapter.submitList(files)
+    }
+
+    private fun checkPermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (!Environment.isExternalStorageManager()) {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) 
+                != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, storagePermissions, STORAGE_PERMISSION_CODE)
+            }
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == STORAGE_PERMISSION_CODE) {
+            if (grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
+                loadFiles()
+            } else {
+                Toast.makeText(this, "يجب منح صلاحيات التخزين لاستخدام التطبيق", Toast.LENGTH_LONG).show()
+                finish()
+            }
+        }
+    }
+
+    override fun onFileClick(file: File) {
+        val intent = Intent(this, FileViewerActivity::class.java).apply {
+            putExtra("file_path", file.absolutePath)
+        }
+        startActivity(intent)
+    }
+
+    override fun onFileLongClick(file: File) {
+        showFileOptionsDialog(file)
+    }
+
+    private fun showFileOptionsDialog(file: File) {
+        val options = arrayOf("فتح", "مشاركة", "إعادة تسمية", "حذف")
+        
+        AlertDialog.Builder(this)
+            .setTitle("خيارات الملف")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> openFile(file)
+                    1 -> shareFile(file)
+                    2 -> renameFile(file)
+                    3 -> deleteFile(file)
+                }
+            }
+            .show()
+    }
+
+    private fun openFile(file: File) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.fromFile(file), getMimeType(file))
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(intent)
+    }
+
+    private fun shareFile(file: File) {
+        val uri = FileProvider.getUriForFile(
+            this,
+            "com.example.securefilemanager.fileprovider",
+            file
+        )
+        
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = getMimeType(file)
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(Intent.createChooser(intent, "مشاركة الملف"))
+    }
+
+    private fun renameFile(file: File) {
+        // تنفيذ إعادة تسمية الملف
+    }
+
+    private fun deleteFile(file: File) {
+        AlertDialog.Builder(this)
+            .setTitle("حذف الملف")
+            .setMessage("هل أنت متأكد من حذف هذا الملف؟")
+            .setPositiveButton("نعم") { _, _ ->
+                if (file.delete()) {
+                    loadFiles()
+                    Toast.makeText(this, "تم حذف الملف", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(this, "فشل في حذف الملف", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("لا", null)
+            .show()
+    }
+
+    private fun getMimeType(file: File): String {
+        return when (file.extension.toLowerCase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "gif" -> "image/gif"
+            "mp4" -> "video/mp4"
+            "avi" -> "video/x-msvideo"
+            "pdf" -> "application/pdf"
+            "txt" -> "text/plain"
+            "kdbx" -> "application/octet-stream" // لملفات KeePass
+            else -> "*/*"
+        }
+    }
+
+    companion object {
+        private const val REQUEST_PICK_IMAGE = 1001
+        private const val REQUEST_PICK_VIDEO = 1002
+        private const val REQUEST_PICK_FILE = 1003
+    }
+}
+package com.example.securefilemanager
+
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import android.widget.ImageView
+import android.widget.TextView
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
+import java.io.File
+
+class FileAdapter(private val listener: FileClickListener) : 
+    ListAdapter<File, FileAdapter.FileViewHolder>(FileDiffCallback()) {
+
+    interface FileClickListener {
+        fun onFileClick(file: File)
+        fun onFileLongClick(file: File)
+    }
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FileViewHolder {
+        val view = LayoutInflater.from(parent.context)
+            .inflate(R.layout.item_file, parent, false)
+        return FileViewHolder(view)
+    }
+
+    override fun onBindViewHolder(holder: FileViewHolder, position: Int) {
+        holder.bind(getItem(position))
+    }
+
+    inner class FileViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+        private val iconView: ImageView = itemView.findViewById(R.id.file_icon)
+        private val nameView: TextView = itemView.findViewById(R.id.file_name)
+        private val sizeView: TextView = itemView.findViewById(R.id.file_size)
+
+        fun bind(file: File) {
+            nameView.text = file.name
+            sizeView.text = formatFileSize(file.length())
+
+            iconView.setImageResource(
+                when (file.extension.toLowerCase()) {
+                    "jpg", "jpeg", "png", "gif" -> R.drawable.ic_image
+                    "mp4", "avi", "mkv" -> R.drawable.ic_video
+                    "pdf" -> R.drawable.ic_pdf
+                    "txt" -> R.drawable.ic_text
+                    "kdbx" -> R.drawable.ic_lock
+                    else -> R.drawable.ic_file
+                }
+            )
+
+            itemView.setOnClickListener { listener.onFileClick(file) }
+            itemView.setOnLongClickListener { 
+                listener.onFileLongClick(file)
+                true
+            }
+        }
+
+        private fun formatFileSize(size: Long): String {
+            if (size <= 0) return "0 B"
+            val units = arrayOf("B", "KB", "MB", "GB", "TB")
+            val digitGroups = (Math.log10(size.toDouble()) / Math.log10(1024.0)).toInt()
+            return String.format("%.1f %s", size / Math.pow(1024.0, digitGroups.toDouble()), 
+                units[digitGroups])
+        }
+    }
+}
+
+class FileDiffCallback : DiffUtil.ItemCallback<File>() {
+    override fun areItemsTheSame(oldItem: File, newItem: File): Boolean {
+        return oldItem.absolutePath == newItem.absolutePath
+    }
+
+    override fun areContentsTheSame(oldItem: File, newItem: File): Boolean {
+        return oldItem.lastModified() == newItem.lastModified() && 
+               oldItem.length() == newItem.length()
+    }
+}
+package com.example.securefilemanager
+
+import android.content.Intent
+import android.os.Bundle
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.biometric.BiometricPrompt
+import androidx.core.content.ContextCompat
+import com.example.securefilemanager.databinding.ActivityLockBinding
+import java.util.concurrent.Executor
+
+class LockActivity : AppCompatActivity() {
+
+    private lateinit var binding: ActivityLockBinding
+    private lateinit var executor: Executor
+    private lateinit var biometricPrompt: BiometricPrompt
+    private lateinit var promptInfo: BiometricPrompt.PromptInfo
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityLockBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+
+        setupBiometricAuth()
+        setupPasswordAuth()
+    }
+
+    private fun setupBiometricAuth() {
+        executor = ContextCompat.getMainExecutor(this)
+        biometricPrompt = BiometricPrompt(this, executor,
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    super.onAuthenticationError(errorCode, errString)
+                    Toast.makeText(this@LockActivity, 
+                        "خطأ في المصادقة: $errString", Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    super.onAuthenticationSucceeded(result)
+                    unlockApp()
+                }
+
+                override fun onAuthenticationFailed() {
+                    super.onAuthenticationFailed()
+                    Toast.makeText(this@LockActivity, 
+                        "فشلت المصادقة", Toast.LENGTH_SHORT).show()
+                }
+            })
+
+        promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("تسجيل الدخول باستخدام البصمة")
+            .setSubtitle("استخدم بصمتك لفتح التطبيق")
+            .setNegativeButtonText("استخدم كلمة المرور")
+            .build()
+
+        biometricPrompt.authenticate(promptInfo)
+    }
+
+    private fun setupPasswordAuth() {
+        binding.unlockButton.setOnClickListener {
+            val password = binding.passwordEditText.text.toString()
+            if (password == "123456") { // يجب استبدالها بكلمة مرور حقيقية من SharedPreferences
+                unlockApp()
+            } else {
+                Toast.makeText(this, "كلمة المرور خاطئة", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun unlockApp() {
+        startActivity(Intent(this, MainActivity::class.java))
+        finish()
+    }
+}
+<?xml version="1.0" encoding="utf-8"?>
+<PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
+    <PreferenceCategory app:title="الأمان">
+        <SwitchPreferenceCompat
+            app:key="enable_lock"
+            app:title="تفعيل القفل"
+            app:summary="يتطلب كلمة مرور أو بصمة لفتح التطبيق"
+            app:defaultValue="true" />
+            
+        <Preference
+            app:key="change_password"
+            app:title="تغيير كلمة المرور"
+            app:summary="تغيير كلمة المرور الرئيسية" />
+    </PreferenceCategory>
+    
+    <PreferenceCategory app:title="التخزين">
+        <ListPreference
+            app:key="storage_location"
+            app:title="موقع التخزين"
+            app:summary="اختيار مكان حفظ الملفات"
+            app:entries="@array/storage_locations"
+            app:entryValues="@array/storage_location_values"
+            app:defaultValue="internal" />
+            
+        <SwitchPreferenceCompat
+            app:key="encrypt_files"
+            app:title="تشفير الملفات"
+            app:summary="تشفير جميع الملفات قبل حفظها"
+            app:defaultValue="true" />
+    </PreferenceCategory>
+</PreferenceScreen>
+<resources>
+    <string name="app_name">مدير الملفات الآمن</string>
+    
+    <!-- Main Activity -->
+    <string name="add_file">إضافة ملف</string>
+    <string name="file_deleted">تم حذف الملف</string>
+    <string name="file_delete_failed">فشل في حذف الملف</string>
+    <string name="storage_permission_required">يجب منح صلاحيات التخزين لاستخدام التطبيق</string>
+    
+    <!-- File Options -->
+    <string name="file_options">خيارات الملف</string>
+    <string name="open">فتح</string>
+    <string name="share">مشاركة</string>
+    <string name="rename">إعادة تسمية</string>
+    <string name="delete">حذف</string>
+    <string name="confirm_delete">هل أنت متأكد من حذف هذا الملف؟</string>
+    <string name="yes">نعم</string>
+    <string name="no">لا</string>
+    
+    <!-- Lock Activity -->
+    <string name="unlock">فتح</string>
+    <string name="enter_password">أدخل كلمة المرور</string>
+    <string name="wrong_password">كلمة المرور خاطئة</string>
+</resources>
+<resources>
+    <array name="storage_locations">
+        <item>التخزين الداخلي</item>
+        <item>بطاقة SD</item>
+        <item>سحابة خاصة</item>
+    </array>
+    
+    <array name="storage_location_values">
+        <item>internal</item>
+        <item>external</item>
+        <item>cloud</item>
+    </array>
+</resources>
